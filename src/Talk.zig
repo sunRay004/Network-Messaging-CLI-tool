@@ -1,5 +1,9 @@
 const std = @import("std");
+const builtin = @import("builtin");
+const native_os = builtin.os.tag;
 var printMutex = std.Thread.Mutex{};
+var serAdress: std.net.Address = undefined;
+var cliAdress: std.net.Address = undefined;
 pub fn main() !void {
     std.debug.print("Started \n", .{});
 
@@ -121,8 +125,14 @@ pub fn client(hostArgs: [:0]const u8, port: [:0]const u8) !void {
             break :blk addrList.addrs[0];
         }
     };
+
     std.debug.print("client conecting to host \n", .{});
     const stream = try std.net.tcpConnectToAddress(hostAddr);
+    // pass stream.handle to other method to get adress
+
+    serAdress = hostAddr;
+    var tempLen: std.posix.socklen_t = @sizeOf(std.net.Address);
+    try std.posix.getsockname(stream.handle, &cliAdress.any, &tempLen);
 
     const rthread = try std.Thread.spawn(.{}, threadedReader.beginReading, .{stream});
     defer rthread.join();
@@ -144,6 +154,9 @@ pub fn server(port: [:0]const u8) !void {
     const clientConnection: std.net.Server.Connection = try lisseningServer.accept();
     std.debug.print("accepted connection from {f} \n", .{clientConnection.address});
 
+    serAdress = adress;
+    cliAdress = clientConnection.address;
+
     const rthread = try std.Thread.spawn(.{}, threadedReader.beginReading, .{clientConnection.stream});
     defer rthread.join();
     const wthread = try std.Thread.spawn(.{}, threadedWriter.beginWriting, .{clientConnection.stream});
@@ -156,17 +169,19 @@ const threadedReader = struct {
         var buff: [1024]u8 = undefined;
         var writer = stream.reader(&buff);
         while (true) {
-            const msg = writer.interface_state.takeDelimiterExclusive('\n') catch |err| {
-                if (err == error.EndOfStream) {
-                    std.debug.print("Conection Terminated", .{});
-                    break;
-                }
-                std.debug.print("{any}\n", .{err});
-                break;
+            const msg = writer.interface_state.takeDelimiterExclusive('\n') catch {
+                // if (err == error.EndOfStream) {
+                //     std.debug.print("read Conection Terminated \n", .{});
+                //     break;
+                // }
+                // std.debug.print("read error {any}\n", .{err});
+                // break;
+                std.debug.print("Connection closed\n", .{});
+                std.process.exit(1);
             };
 
             printMutex.lock();
-            std.debug.print("[ got:] {s}\n", .{msg});
+            std.debug.print("[remote] {s}\n", .{msg});
             printMutex.unlock();
         }
     }
@@ -175,6 +190,8 @@ const threadedReader = struct {
 // take stream, read user input and write it to message, also write to the stream
 const threadedWriter = struct {
     pub fn beginWriting(stream: std.net.Stream) void {
+        const stringModifier = [2]u8{ 13, 10 }; // TODO need to change to multiplatform
+
         var buff: [1024]u8 = undefined;
         var writer = stream.writer(&buff);
 
@@ -184,23 +201,39 @@ const threadedWriter = struct {
         while (true) {
             const msg = stdinReader.interface.takeDelimiterInclusive('\n') catch |err| {
                 if (err == error.EndOfStream) {
-                    std.debug.print("Conection Terminated", .{});
+                    std.debug.print("Closing connection \n", .{});
                     break;
                 }
-                std.debug.print("{any}\n", .{err});
+                std.debug.print("writer error {any}\n", .{err});
                 break;
             };
+            if (native_os == .windows) {
+                if (std.mem.eql(u8, msg, "quit" ++ stringModifier)) {
+                    std.debug.print("Closing connection", .{});
+                    std.process.exit(1);
+                }
+                if (std.mem.eql(u8, msg, "status" ++ stringModifier)) {
+                    std.debug.print("[STATUS] Client: {f} Server: {f} \n", .{ cliAdress, serAdress });
+                    continue;
+                }
+            } else {
+                if (std.mem.eql(u8, msg, "quit\n")) {
+                    std.debug.print("Closing connection", .{});
+                    std.process.exit(1);
+                }
+                if (std.mem.eql(u8, msg, "status\n")) {
+                    std.debug.print("[STATUS] Client: {f} Server: {f} \n", .{ cliAdress, serAdress });
+                    continue;
+                }
+            }
 
             printMutex.lock();
-
             writer.interface.writeAll(msg) catch {
                 std.debug.print("threadedWriter Failed to write \n", .{});
             };
             writer.interface.flush() catch {
                 std.debug.print("threadedWriter Failed to flush \n", .{});
             };
-            std.debug.print("[sent:] {s}", .{msg});
-
             printMutex.unlock();
 
             // lineWriter.clearRetainingCapacity();
