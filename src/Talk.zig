@@ -41,7 +41,6 @@ pub fn main() !void {
             }
 
             std.debug.print("Client Mode, conecting to: {?s}", .{hostArg});
-            // TODO identify if [hostname | IPaddress]
 
             clientMode = true;
             selectedHostArg = hostArg.?;
@@ -56,6 +55,7 @@ pub fn main() !void {
         }
 
         //PORT
+        selectedPort = 12987; // Default port
         if (std.mem.eql(u8, arg, "-p")) {
             portNum = argumentItterator.next();
             if (portNum == null) {
