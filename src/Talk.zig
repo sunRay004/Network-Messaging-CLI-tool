@@ -23,13 +23,14 @@ pub fn main() !void {
     var serverMode: bool = false;
 
     var portNum: ?[:0]const u8 = null;
-    var selectedHostArg: [:0]const u8 = undefined;
-    var selectedPort: [:0]const u8 = undefined;
+    var selectedHostArg: [:0]const u8 = "127.0.0.1"; //TODO make it work with localhost
+    var selectedPort: [:0]const u8 = "12987";
 
     while (argumentItterator.next()) |arg| : (i += 1) {
         //HELP
         if (std.mem.eql(u8, arg, "-help")) {
             std.debug.print("help menue triggered, the program will self destruct in 10 seconds", .{});
+            std.process.exit(1);
         }
         //CLIENT
         if (std.mem.eql(u8, arg, "-h")) {
@@ -55,7 +56,6 @@ pub fn main() !void {
         }
 
         //PORT
-        selectedPort = 12987; // Default port
         if (std.mem.eql(u8, arg, "-p")) {
             portNum = argumentItterator.next();
             if (portNum == null) {
@@ -73,6 +73,12 @@ pub fn main() !void {
         client(selectedHostArg, selectedPort) catch {};
     } else if (serverMode) {
         server(selectedPort) catch {};
+    } else {
+        // Assume Auto mode
+        client(selectedHostArg, selectedPort) catch {
+            std.debug.print("Automode switching to server \n", .{});
+            server(selectedPort) catch {};
+        };
     }
 
     // needed for input reading
@@ -115,16 +121,20 @@ pub fn client(hostArgs: [:0]const u8, port: [:0]const u8) !void {
 
     const hostAddr: std.net.Address = blk: {
         if (!std.net.isValidHostName(hostArgs)) {
-            //exit
+            std.debug.print("INVALID HOST NAME\n", .{});
+            std.process.exit(1);
         }
         if (std.net.Address.parseIp4(hostArgs, newport)) |addr| {
             break :blk addr;
         } else |_| {
             const addrList = try std.net.getAddressList(allocator, hostArgs, newport);
-            std.debug.print(" client also got address {any}\n", .{addrList.addrs[0]});
-            break :blk addrList.addrs[0];
+            const res = addrList.addrs[0];
+            addrList.deinit();
+            break :blk res;
         }
     };
+
+    std.debug.print(" client adress resolved to {f}\n", .{hostAddr});
 
     std.debug.print("client conecting to host \n", .{});
     const stream = try std.net.tcpConnectToAddress(hostAddr);
